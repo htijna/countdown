@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import './App.css'
 
 const releaseDate = new Date(2026, 10, 19)
+const newsRefreshInterval = 60 * 60 * 1000
+const newsCacheKey = 'leonida-watch-press-news-v1'
+const pressFeedUrl = 'https://news.google.com/rss/search?q=%28GTA+6+OR+GTA+VI+OR+%22Grand+Theft+Auto+VI%22%29&hl=en-US&gl=US&ceid=US:en'
 
 const news = [
   {
@@ -77,6 +80,12 @@ const articles = [
   },
 ]
 
+const videos = [
+  { title: 'Grand Theft Auto VI Launch Trailer', date: 'October 15, 2026', id: 'rz1B4B2yBZY', label: 'LATEST OFFICIAL TRAILER' },
+  { title: 'Grand Theft Auto VI: An Extended Look', date: 'August 27, 2026', id: 'tJbzMqJGH4k', label: 'OFFICIAL GAMEPLAY LOOK' },
+  { title: 'Grand Theft Auto VI Trailer 2', date: 'May 6, 2025', id: 'VQRLujxTm3c', label: 'OFFICIAL TRAILER' },
+]
+
 function getTimeLeft() {
   const distance = releaseDate.getTime() - Date.now()
   if (distance <= 0) return { days: 0, hours: 0, minutes: 0, seconds: 0 }
@@ -90,6 +99,10 @@ function getTimeLeft() {
 
 function App() {
   const [timeLeft, setTimeLeft] = useState(getTimeLeft)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
+  const [pressNews, setPressNews] = useState([])
+  const [newsUpdatedAt, setNewsUpdatedAt] = useState(null)
+  const [newsStatus, setNewsStatus] = useState('loading')
   const pad = (number) => String(number).padStart(2, '0')
 
   useEffect(() => {
@@ -97,15 +110,89 @@ function App() {
     return () => window.clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    let active = true
+    let lastRefresh = 0
+
+    const refreshNews = async () => {
+      if (!active) return
+      setNewsStatus('loading')
+      try {
+        const endpoint = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(pressFeedUrl)}`
+        const response = await fetch(endpoint, { headers: { Accept: 'application/json' } })
+        if (!response.ok) throw new Error(`News feed returned ${response.status}`)
+        const payload = await response.json()
+        if (payload.status !== 'ok' || !Array.isArray(payload.items)) throw new Error('News feed response was invalid')
+
+        const items = payload.items.flatMap((item) => {
+          const title = String(item.title || '').trim()
+          let link
+          try { link = new URL(item.link).href } catch { return [] }
+          if (!/^https:$/.test(new URL(link).protocol) || !/\b(?:gta\s*(?:6|vi)|grand theft auto\s*vi)\b/i.test(title)) return []
+
+          const summary = new DOMParser().parseFromString(String(item.description || ''), 'text/html').body.textContent
+            .replace(/\s+/g, ' ').trim().slice(0, 220)
+          const published = new Date(item.pubDate)
+          return [{
+            title,
+            link,
+            summary: summary || 'Read the latest GTA VI coverage from this publisher.',
+            date: Number.isNaN(published.getTime()) ? '' : published.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
+          }]
+        })
+
+        if (active) {
+          const updatedAt = Date.now()
+          lastRefresh = updatedAt
+          setPressNews(items.slice(0, 8))
+          setNewsUpdatedAt(updatedAt)
+          setNewsStatus('ready')
+          try { localStorage.setItem(newsCacheKey, JSON.stringify({ updatedAt, items: items.slice(0, 8) })) } catch { /* Storage may be unavailable. */ }
+        }
+      } catch {
+        if (active) setNewsStatus((current) => current === 'ready' ? 'ready' : 'unavailable')
+      }
+    }
+
+    try {
+      const cached = JSON.parse(localStorage.getItem(newsCacheKey) || 'null')
+      if (cached?.updatedAt && Array.isArray(cached.items)) {
+        setPressNews(cached.items)
+        setNewsUpdatedAt(cached.updatedAt)
+        lastRefresh = cached.updatedAt
+        setNewsStatus('ready')
+      }
+    } catch { /* Ignore an empty or unavailable browser cache. */ }
+
+    refreshNews()
+    const hourlyTimer = window.setInterval(() => refreshNews(), newsRefreshInterval)
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible' && Date.now() - lastRefresh >= newsRefreshInterval) refreshNews()
+    }
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    window.addEventListener('focus', refreshWhenVisible)
+
+    return () => {
+      active = false
+      window.clearInterval(hourlyTimer)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      window.removeEventListener('focus', refreshWhenVisible)
+    }
+  }, [])
+
   return (
     <div className="app-container">
       <div className="overlay" aria-hidden="true" />
       <header className="site-header">
-        <a className="brand" href="#home" aria-label="GTA VI Countdown home"><span aria-hidden="true">★</span> LEONIDA WATCH</a>
-        <nav aria-label="Main navigation">
-          <a href="#news">Latest news</a>
-          <a href="#guides">Player & creator guides</a>
-          <a href="https://www.rockstargames.com/VI" target="_blank" rel="noreferrer">Official GTA VI site ↗</a>
+        <a className="brand" href="#home" aria-label="GTA VI Countdown home"><span aria-hidden="true">★</span><span className="brand-name">LEONIDA WATCH</span></a>
+        <button className="menu-toggle" type="button" aria-expanded={mobileNavOpen} aria-controls="primary-navigation" onClick={() => setMobileNavOpen((open) => !open)}>
+          <span className="menu-icon" aria-hidden="true"><i /><i /></span>{mobileNavOpen ? 'Close' : 'Menu'}
+        </button>
+        <nav id="primary-navigation" className={mobileNavOpen ? 'is-open' : ''} aria-label="Main navigation">
+          <a href="#news" onClick={() => setMobileNavOpen(false)}>News</a>
+          <a href="#guides" onClick={() => setMobileNavOpen(false)}>Guides</a>
+          <a href="#videos" onClick={() => setMobileNavOpen(false)}>Videos & live</a>
+          <a className="nav-official" href="https://www.rockstargames.com/VI" target="_blank" rel="noreferrer">Rockstar site <span aria-hidden="true">↗</span></a>
         </nav>
       </header>
 
@@ -145,7 +232,19 @@ function App() {
                 <a href={item.href} target="_blank" rel="noreferrer">Read at {item.source} <span aria-hidden="true">↗</span></a>
               </article>
             ))}
+            {pressNews.map((item) => (
+              <article className="news-card press-news" key={item.link}>
+                <div className="card-meta"><span>Gaming press</span><time>{item.date || 'Recent'}</time></div>
+                <h3>{item.title}</h3><p>{item.summary}</p>
+                <a href={item.link} target="_blank" rel="noopener noreferrer">Read the full story <span aria-hidden="true">↗</span></a>
+              </article>
+            ))}
           </div>
+          <p className="feed-status" aria-live="polite">
+            {newsStatus === 'loading' && !pressNews.length && 'Loading the latest gaming press coverage…'}
+            {newsStatus === 'unavailable' && 'Live headlines are temporarily unavailable. Official stories above remain available.'}
+            {newsUpdatedAt && <>Press headlines last refreshed {new Date(newsUpdatedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}. Refreshes automatically every hour while this page is open.</>}
+          </p>
           <p className="editorial-note">Independent fan coverage. Rockstar Games is the source for confirmed release information; rumors and predictions are not presented as fact.</p>
         </section>
 
@@ -164,6 +263,36 @@ function App() {
               </article>
             ))}
           </div>
+        </section>
+
+        <section className="content-section video-section" id="videos" aria-labelledby="videos-title">
+          <div className="section-heading">
+            <div><p className="eyebrow">WATCH THE OFFICIALS</p><h2 id="videos-title">Trending GTA 6 videos</h2></div>
+            <p>Rockstar’s latest trailers and gameplay look, embedded here so players and creators can catch up.</p>
+          </div>
+          <div className="video-grid">
+            {videos.map((video) => (
+              <article className="video-card" key={video.id}>
+                <div className="video-frame">
+                  <iframe
+                    src={`https://www.youtube-nocookie.com/embed/${video.id}`}
+                    title={video.title}
+                    loading="lazy"
+                    referrerPolicy="strict-origin-when-cross-origin"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                    allowFullScreen
+                  />
+                </div>
+                <div className="video-info"><span>{video.label} · {video.date}</span><h3>{video.title}</h3><a href={`https://www.youtube.com/watch?v=${video.id}`} target="_blank" rel="noopener noreferrer">Watch on YouTube ↗</a></div>
+              </article>
+            ))}
+          </div>
+          <div className="live-panel">
+            <div className="live-indicator"><span aria-hidden="true" /> LIVE SEARCH</div>
+            <div className="live-copy"><h3>Find GTA 6 streams live right now</h3><p>Browse YouTube’s live-filtered results for current streams. Live listings change constantly, so the link opens the latest results on YouTube.</p></div>
+            <a className="btn btn-primary" href="https://www.youtube.com/results?search_query=GTA+6&sp=EgJAAQ%3D%3D" target="_blank" rel="noopener noreferrer">Browse live streams ↗</a>
+          </div>
+          <p className="editorial-note">Videos are hosted by YouTube and belong to Rockstar Games. Live listings are provided by YouTube and may vary by region.</p>
         </section>
 
         <section className="fact-strip" aria-label="GTA VI confirmed release details">
