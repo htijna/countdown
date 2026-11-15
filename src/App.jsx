@@ -31,14 +31,6 @@ const news = [
     href: 'https://www.rockstargames.com/newswire/article/39ak81277255o9/explore-the-grand-theft-auto-vi-launch-gallery',
     source: 'Rockstar Newswire',
   },
-  {
-    date: 'October 15, 2026',
-    category: 'Trailer',
-    title: 'The launch trailer is now playing',
-    summary: 'The official trailer introduces more of Jason and Lucia’s story and features new music by Justice. Watch it on Rockstar’s GTA VI site.',
-    href: 'https://www.rockstargames.com/newswire/article/517572321a549a/watch-the-grand-theft-auto-vi-launch-trailer',
-    source: 'Rockstar Newswire',
-  },
 ]
 
 const articles = [
@@ -130,12 +122,19 @@ function App() {
           try { link = new URL(item.link).href } catch { return [] }
           if (!/^https:$/.test(new URL(link).protocol) || !/\b(?:gta\s*(?:6|vi)|grand theft auto\s*vi)\b/i.test(title)) return []
 
-          const summary = new DOMParser().parseFromString(String(item.description || ''), 'text/html').body.textContent
-            .replace(/\s+/g, ' ').trim().slice(0, 220)
+          const descriptionDocument = new DOMParser().parseFromString(String(item.description || ''), 'text/html')
+          const summary = descriptionDocument.body.textContent.replace(/\s+/g, ' ').trim().slice(0, 220)
+          const imageCandidate = typeof item.thumbnail === 'string' ? item.thumbnail : item.enclosure?.link || descriptionDocument.querySelector('img')?.src
+          let image = ''
+          try {
+            const parsedImage = new URL(imageCandidate)
+            if (parsedImage.protocol === 'https:') image = parsedImage.href
+          } catch { /* Articles without a usable thumbnail render without one. */ }
           const published = new Date(item.pubDate)
           return [{
             title,
             link,
+            image,
             summary: summary || 'Read the latest GTA VI coverage from this publisher.',
             date: Number.isNaN(published.getTime()) ? '' : published.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
           }]
@@ -144,10 +143,10 @@ function App() {
         if (active) {
           const updatedAt = Date.now()
           lastRefresh = updatedAt
-          setPressNews(items.slice(0, 8))
+          setPressNews(items.slice(0, 3))
           setNewsUpdatedAt(updatedAt)
           setNewsStatus('ready')
-          try { localStorage.setItem(newsCacheKey, JSON.stringify({ updatedAt, items: items.slice(0, 8) })) } catch { /* Storage may be unavailable. */ }
+          try { localStorage.setItem(newsCacheKey, JSON.stringify({ updatedAt, items: items.slice(0, 3) })) } catch { /* Storage may be unavailable. */ }
         }
       } catch {
         if (active) setNewsStatus((current) => current === 'ready' ? 'ready' : 'unavailable')
@@ -227,6 +226,7 @@ function App() {
           <div className="news-grid">
             {news.map((item, index) => (
               <article className={`news-card ${index === 0 ? 'featured-news' : ''}`} key={item.title}>
+                {item.image && <img className="news-image" src={item.image} alt={`${item.title} thumbnail`} loading="lazy" onError={(event) => { event.currentTarget.hidden = true }} />}
                 <div className="card-meta"><span>{item.category}</span><time>{item.date}</time></div>
                 <h3>{item.title}</h3><p>{item.summary}</p>
                 <a href={item.href} target="_blank" rel="noreferrer">Read at {item.source} <span aria-hidden="true">↗</span></a>
@@ -234,6 +234,7 @@ function App() {
             ))}
             {pressNews.map((item) => (
               <article className="news-card press-news" key={item.link}>
+                {item.image && <img className="news-image" src={item.image} alt={`${item.title} thumbnail`} loading="lazy" onError={(event) => { event.currentTarget.hidden = true }} />}
                 <div className="card-meta"><span>Gaming press</span><time>{item.date || 'Recent'}</time></div>
                 <h3>{item.title}</h3><p>{item.summary}</p>
                 <a href={item.link} target="_blank" rel="noopener noreferrer">Read the full story <span aria-hidden="true">↗</span></a>
